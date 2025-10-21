@@ -40,3 +40,6 @@ def serp_average(
         "average_non_zero": avg,
         "raw_output": output.strip()[:5000]
     }
+@app.get("/health")
+def health():
+    return {"ok": True}
