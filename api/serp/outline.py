@@ -3,15 +3,14 @@ from http.server import BaseHTTPRequestHandler
 import os, json, urllib.parse, requests
 from bs4 import BeautifulSoup
 
-AIzaSyBSqVM5a_3lmn6GQI1OyfTlL2BkOjUm0dQ = os.getenv("AIzaSyBSqVM5a_3lmn6GQI1OyfTlL2BkOjUm0dQ")
-952063c5546a94406 = os.getenv("952063c5546a94406
-")
+GOOGLE_API_KEY = os.getenv("AIzaSyBSqVM5a_3lmn6GQI1OyfTlL2BkOjUm0dQ")
+GOOGLE_CSE_ID = os.getenv("952063c5546a94406")
 
 def cse_search(q, num=10, lang="ja", country="jp"):
     url = "https://www.googleapis.com/customsearch/v1"
     params = {
         "key": AIzaSyBSqVM5a_3lmn6GQI1OyfTlL2BkOjUm0dQ,
-        "cx": 952063c5546a94406,
+        "cx": GOOGLE_CSE_ID,
         "q": q,
         "num": num,
         "hl": lang,
@@ -90,3 +89,5 @@ class handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+500
