@@ -28,21 +28,47 @@ def fetch_headings(url):
         r = requests.get(
             url,
             timeout=20,
-            headers={"User-Agent": "Mozilla/5.0 (SERP-Outline-Bot)"}
+            headers={
+                "User-Agent": "Mozilla/5.0 (SERP-Outline-Bot)",
+                "Accept-Language": "ja-JP,ja;q=0.9,en;q=0.8",
+            }
         )
         r.raise_for_status()
-        soup = BeautifulSoup(r.text, "lxml")
-        title = (soup.title.string or "").strip() if soup.title and soup.title.string else ""
+
+        # ★文字化け対策：textではなくcontent（バイト列）を使う
+        soup = BeautifulSoup(r.content, "lxml")
+
+        # タイトル取得を少し強化（titleが空のサイト対策）
+        title = ""
+        if soup.title and soup.title.string:
+            title = soup.title.string.strip()
+        else:
+            og = soup.find("meta", property="og:title")
+            if og and og.get("content"):
+                title = og.get("content").strip()
+
+        # 見出し抽出＋お掃除（全角半角の統一・番号消しなど）
+        import re, unicodedata
+        def clean(txt: str) -> str:
+            # 空白類削減
+            txt = re.sub(r"\s+", " ", txt).strip()
+            # 全角半角正規化
+            txt = unicodedata.normalize("NFKC", txt)
+            # 先頭の番号・記号を除去（例: "1. " "２）" "3-" など）
+            txt = re.sub(r"^\d+[\.\)\-、]+\s*", "", txt)
+            return txt
 
         hs = []
         for tag in soup.select("h1, h2, h3"):
             txt = tag.get_text(" ", strip=True)
+            txt = clean(txt)
             if txt:
                 hs.append({"tag": tag.name.lower(), "text": txt})
 
         return {"url": url, "title": title, "headings": hs}
     except Exception:
         return {"url": url, "title": "", "headings": []}
+
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
