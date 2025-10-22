@@ -21,7 +21,7 @@ OVERALL_BUDGET = 8.0     # 全体の猶予時間（秒）
 _session = requests.Session()
 _retries = Retry(
     total=3,
-    backoff_factor=0.5,                         # 0.5, 1.0, 2.0...
+    backoff_factor=0.5,
     status_forcelist=[429, 500, 502, 503, 504],
     allowed_methods=["GET"],
     raise_on_status=False,
@@ -80,7 +80,7 @@ def fetch_headings(url, timeout=PER_REQ_TIMEOUT):
             def clean(txt: str) -> str:
                 txt = re.sub(r"\s+", " ", txt).strip()
                 txt = unicodedata.normalize("NFKC", txt)
-                txt = re.sub(r"^\d+[\.\)\-、]+\s*", "", txt)  # 先頭の番号/記号除去
+                txt = re.sub(r"^\d+[\.\)\-、]+\s*", "", txt)
                 return txt
 
             hs = []
@@ -104,9 +104,7 @@ class handler(BaseHTTPRequestHandler):
 
             keyword = (qs.get("keyword") or [None])[0]
             mode = (qs.get("mode") or ["full"])[0]  # "full" | "lite"
-            # 最大10。liteは初期値5で軽く。
-            default_num = "5" if mode == "lite" else "8"
-            num = min(int((qs.get("num") or [default_num])[0]), 10)
+            num = 5  # ← 常に5件固定
             lang = (qs.get("lang") or ["ja"])[0]
             country = (qs.get("country") or ["jp"])[0]
 
@@ -135,7 +133,7 @@ class handler(BaseHTTPRequestHandler):
                         "status": status,
                         "keyword": keyword or "",
                         "sampled": 0,
-                        "suggested_heading_count": 12,           # フォールバック既定
+                        "suggested_heading_count": 12,
                         "avg_heading_count": 0,
                         "top_headings": [],
                         "sources": [],
@@ -148,10 +146,10 @@ class handler(BaseHTTPRequestHandler):
                     },
                 )
 
-            # === LITE モード：HTML取得なしで titles のみ（見出しは空）
+            # === LITE モード：HTML取得なしで titles のみ
             if mode == "lite":
                 sources = [{"url": u, "title": "", "headings": []} for u in urls]
-                suggested = 12  # 安全な既定値
+                suggested = 12
                 return self._json(
                     200,
                     {
@@ -170,7 +168,7 @@ class handler(BaseHTTPRequestHandler):
                     },
                 )
 
-            # === FULL モード：並列取得（総時間ガード）
+            # === FULL モード：並列取得
             sources = []
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
                 futs = {ex.submit(fetch_headings, u): u for u in urls}
