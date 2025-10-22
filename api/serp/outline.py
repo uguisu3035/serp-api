@@ -35,7 +35,7 @@ COMMON_HEADERS = {
     "Accept-Language": "ja-JP,ja;q=0.9,en;q=0.8",
 }
 
-# === Google CSE 検索（軽いリトライ＋例外ハンドリング）===
+# === Google CSE 検索 ===
 def cse_search(q, num=10, lang="ja", country="jp"):
     url = "https://www.googleapis.com/customsearch/v1"
     params = {
@@ -56,12 +56,10 @@ def cse_search(q, num=10, lang="ja", country="jp"):
             items = r.json().get("items", []) or []
             return [it.get("link") for it in items if it.get("link")]
         except Exception:
-            # 短いジッター付きバックオフ
             time.sleep(0.4 + 0.3 * i + random.random() * 0.2)
-    # 失敗時は空配列（上位でメッセージ化）
     return []
 
-# === 見出し抽出（軽いリトライ）===
+# === 見出し抽出 ===
 def fetch_headings(url, timeout=PER_REQ_TIMEOUT):
     for i in range(2):  # 2回だけ試す
         try:
@@ -93,7 +91,7 @@ def fetch_headings(url, timeout=PER_REQ_TIMEOUT):
 
             return {"url": url, "title": title, "headings": hs}
         except Exception:
-            time.sleep(0.2 + 0.2 * i)  # 短いバックオフ
+            time.sleep(0.2 + 0.2 * i)
     return {"url": url, "title": "", "headings": []}
 
 # === メインハンドラ ===
@@ -105,26 +103,74 @@ class handler(BaseHTTPRequestHandler):
             qs = urllib.parse.parse_qs(parsed.query)
 
             keyword = (qs.get("keyword") or [None])[0]
-            # 失敗しやすい時は num を小さめにして負荷軽減
-            num = min(int((qs.get("num") or ["8"])[0]), 10)  # 最大10
+            mode = (qs.get("mode") or ["full"])[0]  # "full" | "lite"
+            # 最大10。liteは初期値5で軽く。
+            default_num = "5" if mode == "lite" else "8"
+            num = min(int((qs.get("num") or [default_num])[0]), 10)
             lang = (qs.get("lang") or ["ja"])[0]
             country = (qs.get("country") or ["jp"])[0]
 
-            if not keyword:
-                return self._json(400, {"error": "missing keyword"})
+            # 手動URL指定: ?urls=https://a.com,https://b.com
+            raw_urls = (qs.get("urls") or [None])[0]
+            manual_urls = []
+            if raw_urls:
+                manual_urls = [u.strip() for u in raw_urls.split(",") if u.strip()]
 
-            urls = cse_search(keyword, num=num, lang=lang, country=country)
+            if not keyword and not manual_urls:
+                return self._json(400, {"error": "missing keyword or urls"})
+
+            # URLの決定
+            if manual_urls:
+                urls = manual_urls[:num]
+                url_source = "manual"
+            else:
+                urls = cse_search(keyword, num=num, lang=lang, country=country)
+                url_source = "cse"
+
             if not urls:
-                # 外部API（CSE）側の一時障害・レート制限が濃厚
+                status = "unavailable" if url_source == "cse" else "ok"
                 return self._json(
-                    503,
+                    503 if url_source == "cse" else 200,
                     {
-                        "error": "upstream_unavailable",
-                        "message": "External search API might be throttling or temporarily unavailable. Please retry later.",
+                        "status": status,
+                        "keyword": keyword or "",
+                        "sampled": 0,
+                        "suggested_heading_count": 12,           # フォールバック既定
+                        "avg_heading_count": 0,
+                        "top_headings": [],
+                        "sources": [],
+                        "partial": False,
+                        "elapsed": round(time.time() - start, 2),
+                        "message": "External search API unavailable. Using fallback defaults."
+                                   if url_source == "cse" else "No URLs provided.",
+                        "url_source": url_source,
+                        "mode": mode,
                     },
                 )
 
-            # 並列取得（総時間ガード）
+            # === LITE モード：HTML取得なしで titles のみ（見出しは空）
+            if mode == "lite":
+                sources = [{"url": u, "title": "", "headings": []} for u in urls]
+                suggested = 12  # 安全な既定値
+                return self._json(
+                    200,
+                    {
+                        "status": "degraded",
+                        "keyword": keyword or "",
+                        "sampled": len(sources),
+                        "suggested_heading_count": suggested,
+                        "avg_heading_count": 0,
+                        "top_headings": [],
+                        "sources": sources,
+                        "partial": False,
+                        "elapsed": round(time.time() - start, 2),
+                        "message": "Lite mode (no HTML fetch).",
+                        "url_source": url_source,
+                        "mode": mode,
+                    },
+                )
+
+            # === FULL モード：並列取得（総時間ガード）
             sources = []
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
                 futs = {ex.submit(fetch_headings, u): u for u in urls}
@@ -133,22 +179,20 @@ class handler(BaseHTTPRequestHandler):
                     if time.time() - start > OVERALL_BUDGET:
                         break
 
-            # 集計
             texts = [h["text"] for s in sources for h in s.get("headings", []) if h.get("text")]
             freq = Counter(texts)
             top_headings = [{"text": t, "count": c} for t, c in freq.most_common(30)]
-
             counts = [len(s.get("headings", [])) for s in sources if s.get("headings")]
             avg_count = round(sum(counts) / len(counts), 1) if counts else 0
-            suggested = int(round(avg_count)) if avg_count else 10
+            suggested = int(round(avg_count)) if avg_count else 12
             suggested = max(6, min(20, suggested))
-
             partial = len(sources) < len(urls)
 
             return self._json(
                 200,
                 {
-                    "keyword": keyword,
+                    "status": "partial" if partial else "ok",
+                    "keyword": keyword or "",
                     "sampled": len(sources),
                     "suggested_heading_count": suggested,
                     "avg_heading_count": avg_count,
@@ -156,6 +200,8 @@ class handler(BaseHTTPRequestHandler):
                     "sources": sources,
                     "partial": partial,
                     "elapsed": round(time.time() - start, 2),
+                    "url_source": url_source,
+                    "mode": mode,
                 },
             )
         except Exception as e:
