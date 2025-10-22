@@ -10,7 +10,7 @@ def cse_search(q, num=10, lang="ja", country="jp"):
     url = "https://www.googleapis.com/customsearch/v1"
     params = {
         "key": AIzaSyBSqVM5a_3lmn6GQI1OyfTlL2BkOjUm0dQ,
-        "cx": GOOGLE_CSE_ID,
+        "cx": 952063c5546a94406,
         "q": q,
         "num": num,
         "hl": lang,
